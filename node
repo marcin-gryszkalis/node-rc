@@ -33,15 +33,14 @@
 # node_msg      The name of your program, printed at start. Defaults to "node".
 # node_dir      The directory where your node files live. Must be defined.
 # node_logdir   The directory for logfiles. Defaults to ${node_dir}/logs.
-# node_user     Passed to noded process as process.env.USER. Defaults to "www".
-# node_group    Passed to noded process as process.env.GROUP. Defaults to "www".
-#               node_user and node_group may be used to drop node's root
-#               privileges after binding to ports.
+# node_user     User for both forever and the script. Defaults to "nobody".
 # node_app      Application main script. Defaults to "/bin/www" (relative
 #               to node_user's home
 # node_forever  forever binary file path. Defaults to "/usr/local/bin/forever".
 # node_local_forever    use local forever binary
 #               (ie. node_user's home/node_modules/.bin/forever)
+# node_forever_root     as specified in forever docs contains forever config 
+#               and sockets for communicating with workers
 # node_forever_log      forever log file. Defaults to /var/log/forever.log.
 
 # PROVIDE: node
@@ -54,12 +53,11 @@ name="node"
 rcvar="${name}_enable"
 
 start_precmd="${name}_prestart"
-start_cmd="${name}_start"
 stop_cmd="${name}_stop"
+status_cmd="${name}_status"
 
 # node executable
 command="/usr/local/bin/${name}"
-pidfile="/var/run/${name}.pid"
 
 # forever needs a path for each command
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/games:/usr/local/sbin:/usr/local/bin:/root/bin
@@ -69,46 +67,55 @@ load_rc_config $name
 : ${node_enable:="no"}
 : ${node_msg:="node"}
 : ${node_logdir:="${node_dir}/logs"}
-: ${node_user:="www"}
-: ${node_group:="www"}
+: ${node_user:="nobody"}
 : ${node_app:="/bin/www"}
 : ${node_forever:="/usr/local/bin/forever"}
 : ${node_local_forever:="no"}
-: ${node_forever_log:="/var/log/forever.log"}
+: ${node_forever_log:="${node_logdir}/forever.log"}
+: ${node_forever_root:="/var/forever"}
+
+export FOREVER_ROOT="${node_forever_root}"
 
 case ${node_local_forever} in
     [Yy][Ee][Ss])
-        node_forever="/home/${node_user}/node_modules/.bin/forever"
+        node_forever="${node_dir}/node_modules/.bin/forever"
         ;;
     *)
         ;;
 esac
 
-
 # make sure we're pointing to the right place
 required_dirs="${node_dir}"
 required_files="${node_dir}/${node_app}"
 
+command="${node_forever}"
+# --pidFile ${pidfile}  -- let forever use default pid file, because it's woker's pid
+command_args="start -a \
+-l ${node_forever_log} \
+-o ${node_logdir}/node.log \
+-e ${node_logdir}/node_err.log \
+--minUptime 3000 --spinSleepTime 1000000 \
+--workingDir ${node_dir} \
+${node_dir}/${node_app}"
+
 # any other checks go here
 node_prestart()
 {
-    echo "$node_msg starting"
-}
+    mkdir "${node_forever_root}" 2>/dev/null
+    chown "${node_user}" "${node_forever_root}"
 
-node_start()
-{
-    # pass USER and GROUP to node so it can drop privs
-    NEW_USER="${node_user}" \
-    NEW_GROUP="${node_group}" \
-    ${node_forever} start -a -l ${node_forever_log} -o ${node_logdir}/node.log \
-        -e ${node_logdir}/node_err.log --minUptime 3000 --pidFile ${pidfile} \
-        --workingDir ${node_dir} ${node_dir}/${node_app}
+    echo "$node_msg starting"
 }
 
 node_stop()
 {
-    # kill node nicely -- node should catch this signal gracefully
-    ${node_forever} stop --killSignal SIGTERM `cat ${pidfile}`
+    ${node_forever} stop --killSignal SIGTERM "${node_dir}/${node_app}"
+}
+
+node_status()
+{
+    ${node_forever} list
 }
 
 run_rc_command "$1"
+
